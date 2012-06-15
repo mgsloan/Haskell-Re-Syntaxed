@@ -16,7 +16,7 @@ Foo a = (a, a -> a, Int)
 
 -- GADT
 List :: Type -> Type
-List = data
+List a = data
 	Null :: List a
 	Cons :: a -> List a -> List a
 
@@ -98,3 +98,4 @@ Functor (_, a) = instance ...
 -- Serious consideration for synonym names for Monad and Functor (DoAble, MapAble?)
 
 -- What do you think? What would you change?
+
