@@ -153,10 +153,6 @@ Why?
   - They encourage sticking methods into the class that wouldn't be there
     other than to provide optimizations for specific instance cases.
 
-* More power, without being awkward.
-
-  - In order to provide parameters to a superclass
-
 * Avoidance of TH.
 
   - People have observed many things that are wrong with TH / mis-aligned with
@@ -212,6 +208,6 @@ Treating class instance definitions as first-class values, to be returned from
 and provided to functions, might encourage investigation into being able to
 provide class dictionaries at runtime.
 
-As mentioned earlier, I'm not sure if "Instance (Num a)" should have the same
-data representation that's implicitly created for "Num a =>". For this
+As mentioned earlier, I'm not sure if `Instance (Num a)` should have the same
+data representation that's implicitly created for `Num a =>`. For this
 "run-time instances" idea, it would certainly be elegant if it did.
