@@ -78,7 +78,9 @@ representation of an instance into the desired `Instance`.  In this case, we
 update a record that's initially populated with `Nothing`s to express partial
 implementations of classes.
 
-Here's why this idea is interesting:
+
+Why?
+----
 
 * More powerful instance derivation allows us to mitigate the impact of
   historical decisions.
@@ -86,7 +88,7 @@ Here's why this idea is interesting:
   - Being able to rework, say, the Numeric class hierarchy, is the main goal
     of this proposal:
     http://hackage.haskell.org/trac/ghc/wiki/DefaultSuperclassInstances
-
+    
     As mentioned in that page, default superclass instances have been a "matter
     of consternation" for some time, as no approach to the problem has been
     satisfying enough to be implemented.  By forcing the decision of how to
@@ -95,27 +97,48 @@ Here's why this idea is interesting:
     The possibility is briefly mention, and a link to the relevant proposal
     is given:
     http://www.haskell.org/haskellwiki/Superclass_defaults
-
+    
     This proposal, and mine, play quite nicely with constraint synonyms - instance
     templates can have a compound class constraint in the type argument.
-
+    
     Where this proposal falls flat is that it still relies on the defaulting
     system as its mechanism, leading to strange things:
-
+    
     > If both Class1 and Class2 have a default implementation, and Class1 is a
     > (indirect) superclass of Class2, then the default from Class1 is ignored.
-
+    
     Also, by trying to wedge superclass defaults into the existing syntax, we
     end up with a ton of funky restrictions:
-
+    
     > Subject to the constraint that:
     > * No class appears more than once in the list.
     > * The arguments to each class are the same.
     > * ... the superclass relation gives a connected acyclic graph with a
         single source, the most specific class in the hierarchy.
-
+    
     This is also a weakness in the Strathyclyde Haskell Enhancement's
     implementation of default superclass instances.
+
+  - Here's a design goal from the superclass instances write-up. It's given as
+    the reason that an "Opt-In" scheme such as this is undesirable.
+    
+    > Design goal 1: a class C can be re-factored into a class C with a
+    > superclass, without disturbing any clients.
+    
+    I think that this is still quite possible with the Opt-In scheme, we just
+    need to make instance declarations potentially mean something quite
+    different than before.  The earlier, record-based example would be
+    the result of de-sugaring:
+
+    ```haskell
+    instance Enum Float where
+      toEnum   = fromIntegral
+      fromEnum = fromInteger . truncate
+    ```
+
+    If this sugar were implemented, then /all/ instances of Enum would pass
+    through this. This can allow us to split up classes without breaking code
+    (preventing the pain of things like the Eq / Show / Num split-up).
 
 
 * Class defaults are broken.
