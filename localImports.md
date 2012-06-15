@@ -1,6 +1,3 @@
-MGSloan Local Wheres
-====================
-
 Where declarations already allow you to pretend like you are introducing a
 new local namespace / module - why not allow additional varieties of
 top-level declarations?
@@ -42,7 +39,7 @@ qualified operators (used above):
 http://www.haskell.org/ghc/docs/6.12.3/html/users_guide/syntax-extns.html#new-qualified-operators
 
 This is definitely a good change, however it incurs an additional overhead of 4
-characters (`A.(+)` vs A.+) for infix qualified operators.  This is too much for
+characters `\`(A.(+)\`` vs `A.+` for infix qualified operators.  This is too much for
 things that were meant to be concise, combining symbols, which is why you don't
 see very many qualified operators.
 

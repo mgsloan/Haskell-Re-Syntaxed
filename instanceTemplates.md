@@ -19,9 +19,10 @@ monadReturnBind b r
 
 monadApplicative :: Monad m
                  => Instance (Applicative m)
-monadApplicative = instance Applicative m where
-  pure = return
-  (<*>) = ap
+monadApplicative
+  = instance Applicative m where
+      pure = return
+      (<*>) = ap
 ```
 
 I'm not sure what to call these, so for now will use "instance templates".
@@ -35,64 +36,103 @@ possibilities:
 
 ```haskell
 -- TH style (undecorated, top-level invocation)
-monadReturnBind (:[]) (flip concatMap) :: Instance (Monad [])
+instantiate (monadReturnBind (:[]) (flip concatMap) :: Instance (Monad []))
 
 -- Decorated TH
-$(monadReturnBind (:[]) (flip concatMap) :: Instance (Monad []))
+$(instantiate (monadReturnBind (:[]) (flip concatMap) :: Instance (Monad [])))
 
--- Using type declarations to get the instance we want
-monadApplicative :: Instance (Applicative [])
-
--- Special syntax (probably a bad example)
+-- Special syntax
 derive Monad [] using
   monadReturnBind (:[]) (flip concatMap)
 ```
 
 Note that every definition provides the type of instance expected.  This makes
 it clear what this means for our (implicit) exports, and allows for string
-searches to figure out where an instance is defined.
+searches to figure out where an instance is defined.  If this was implemented
+using TH, `instantiate` would have the type `Instance a -> [Dec]`.
 
-We still haven't discussed what "Instance" actually /is/.  At first, I
-thought it would simply have kind "Constraint -> *".  I'm not sure what the
-value of "Instance a" should be.  Probably cleanest would be to have it quite
-literally be the dictionary that's passed around for the class at runtime, in
-order to satisfy "Num a =>" constraints. However, for the TH implementation of
-this idea it will almost certainly store a list of the generated declarations.
+We still haven't discussed what `Instance` actually /is/.  Being able to use
+classes as parameters is conveniently provided by constraint kinds.  I'm not
+sure what the value of `Instance a` should be.  Probably cleanest would be to
+have it quite literally be the dictionary that's passed around for the class at
+runtime. However, for the TH implementation of this idea it will almost
+certainly store a list of the generated declarations.
 
+Record (eeew) syntax could make this stuff look a tiny bit closer to building
+instances based on some subset of the methods:
 
+```haskell
+instantiate (implement $ enumDict {
+    toEnum   = Just fromIntegral
+    fromEnum = Just (fromInteger . truncate)
+  } :: Instance (Enum Float))
+```
+
+This example is from the Prelude definition for `Float`.  Interestingly,
+`Double` has an identical set of method definitions!  A perfect application of
+instance templates - allowing convenient implementation of `Enum` for any RealFrac
+implementor.
+
+`implement :: Implement a ctxt => a -> Instance ctxt` converts some data-
+representation of an instance into the desired `Instance`.  In this case, we
+update a record that's initially populated with `Nothing`s to express partial
+implementations of classes.
 
 Here's why this idea is interesting:
 
-* More powerful instance derivation allows us to mitigate historical decisions.
+* More powerful instance derivation allows us to mitigate the impact of
+  historical decisions.
 
   - Being able to rework, say, the Numeric class hierarchy, is the main goal
     of this proposal:
     http://hackage.haskell.org/trac/ghc/wiki/DefaultSuperclassInstances
 
-  - In this post, Luke Palmer points out that without orphan instances, we can
-    do default-superclassing.
+    As mentioned in that page, default superclass instances have been a "matter
+    of consternation" for some time, as no approach to the problem has been
+    satisfying enough to be implemented.  By forcing the decision of how to
+    implement a class to be per-datatype, we avoid attempting to define
+    typeclasses which can be implemented universally in terms of some other.
+    The possibility is briefly mention, and a link to the relevant proposal
+    is given:
+    http://www.haskell.org/haskellwiki/Superclass_defaults
 
-    http://lukepalmer.wordpress.com/2009/01/25/a-world-without-orphans/
+    This proposal, and mine, play quite nicely with constraint synonyms - instance
+    templates can have a compound class constraint in the type argument.
 
-    The problem with this is that orphan instances can be nice – in the
-    comments of the above post, augustss points out that newtype wrappers are
-    clunky. Orphan instances lead to the same benefits and problems as multiple
-    inheritance: the potential for combination of modular code, at the cost of
-    the potential for conflict.
+    Where this proposal falls flat is that it still relies on the defaulting
+    system as its mechanism, leading to strange things:
 
-  - By forcing the decision per-datatype, we end up with the same situation
-    regarding orphans - calling these instance-generating functions 
+    > If both Class1 and Class2 have a default implementation, and Class1 is a
+    > (indirect) superclass of Class2, then the default from Class1 is ignored.
+
+    Also, by trying to wedge superclass defaults into the existing syntax, we
+    end up with a ton of funky restrictions:
+
+    > Subject to the constraint that:
+    > * No class appears more than once in the list.
+    > * The arguments to each class are the same.
+    > * ... the superclass relation gives a connected acyclic graph with a
+        single source, the most specific class in the hierarchy.
+
+    This is also a weakness in the Strathyclyde Haskell Enhancement's
+    implementation of default superclass instances.
+
 
 * Class defaults are broken.
 
   - While minimum definition requirements are often documented, they aren't
-    enforced.
+    enforced.  Using the "record" style mentioned above with instance
+    templates, this can be checked.
 
   - They create somewhat OOP-ish inheritance of implementation. While handy,
     this can encourage some very undesirable class hierarchy designs.
 
   - They encourage sticking methods into the class that wouldn't be there
     other than to provide optimizations for specific instance cases.
+
+* More power, without being awkward.
+
+  - In order to provide parameters to a superclass
 
 * Avoidance of TH.
 
@@ -104,6 +144,7 @@ Here's why this idea is interesting:
     write), by making it a language feature, we can conquer the majority of the
     useful / reasonable TH design space.
 
+  - Compared to the power and complexity of TH, this feature is very simple.
 
 Not avoiding TH
 ---------------
@@ -133,12 +174,12 @@ wrapNum f g = instance Num a where
 ```
 
 We can automatically generate this definition by processing the type signatures
-of the methods in the class.  Parameters that are "a" should have "f" applied
-to them, and results of type "a" should have "g" applied to them.
+of the methods in the class.  Parameters that are `a` should have `f` applied
+to them, and results of type `a` should have `g` applied to them.
 
 By extending this rewriting to more cases, we can get more sophisticated
-derivers.  For example, it could be specified that a result of type "f a"
-should have "fmap g" applied to it.
+derivers.  For example, it could be specified that a result of type `f a`
+should have `fmap g` applied to it.
 
 
 Runtime Instances
@@ -148,7 +189,6 @@ Treating class instance definitions as first-class values, to be returned from
 and provided to functions, might encourage investigation into being able to
 provide class dictionaries at runtime.
 
-As mentioned earlier, I'm not sure if "Instance (Num a)" should have the same data representation 
-that's implicitly created for "Num a =>". For this "run-time instances" idea,
-it would certainly be elegant if it did.  However, for the TH implementation of
-this idea it will almost certainly a list of the generated declarations.
+As mentioned earlier, I'm not sure if "Instance (Num a)" should have the same
+data representation that's implicitly created for "Num a =>". For this
+"run-time instances" idea, it would certainly be elegant if it did.
