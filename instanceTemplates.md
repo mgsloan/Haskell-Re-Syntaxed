@@ -91,7 +91,7 @@ Why?
   - Being able to rework, say, the Numeric class hierarchy, is the main goal
     of this proposal:
     http://hackage.haskell.org/trac/ghc/wiki/DefaultSuperclassInstances
-    
+
     As mentioned in that page, default superclass instances have been a "matter
     of consternation" for some time, as no approach to the problem has been
     satisfying enough to be implemented.  By forcing the decision of how to
@@ -100,10 +100,10 @@ Why?
     The possibility is briefly mention, and a link to the relevant proposal
     is given:
     http://www.haskell.org/haskellwiki/Superclass_defaults
-    
+
     This proposal, and mine, play quite nicely with constraint synonyms - instance
     templates can have a compound class constraint in the type argument.
-    
+
     Where this proposal falls flat is that it still relies on the defaulting
     system as its mechanism, leading to strange things:
     
