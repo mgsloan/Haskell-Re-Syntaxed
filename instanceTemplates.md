@@ -70,8 +70,8 @@ instantiate (implement $ enumDict {
 
 This example is from the Prelude definition for `Float`.  Interestingly,
 `Double` has an identical set of method definitions!  A perfect application of
-instance templates - allowing convenient implementation of `Enum` for any RealFrac
-implementor.
+instance templates - allowing convenient implementation of `Enum` for any
+`RealFrac` implementor.
 
 `implement :: Implement a ctxt => a -> Instance ctxt` converts some data-
 representation of an instance into the desired `Instance`.  In this case, we
@@ -81,6 +81,9 @@ implementations of classes.
 
 Why?
 ----
+
+* It's simple.  We're just supplying values to a generic instance, to create a
+  specific one.
 
 * More powerful instance derivation allows us to mitigate the impact of
   historical decisions.
@@ -129,13 +132,13 @@ Why?
     need to make instance declarations potentially mean something quite
     different than before.  The earlier, record-based example would be
     the result of de-sugaring:
-
+    
     ```haskell
     instance Enum Float where
       toEnum   = fromIntegral
       fromEnum = fromInteger . truncate
     ```
-
+    
     If this sugar were implemented, then /all/ instances of Enum would pass
     through this. This can allow us to split up classes without breaking code
     (preventing the pain of things like the Eq / Show / Num split-up).
