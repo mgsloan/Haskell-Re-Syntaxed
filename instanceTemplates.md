@@ -204,18 +204,6 @@ derivers.  For example, it could be specified that a result of type `f a`
 should have `fmap g` applied to it.
 
 
-Runtime Instances
------------------
-
-Treating class instance definitions as first-class values, to be returned from 
-and provided to functions, might encourage investigation into being able to
-provide class dictionaries at runtime.
-
-As mentioned earlier, I'm not sure if `Instance (Num a)` should have the same
-data representation that's implicitly created for `Num a =>`. For this
-"run-time instances" idea, it would certainly be elegant if it did.
-
-
 Brainstorming Notes
 -------------------
 
@@ -287,6 +275,36 @@ I think that the latter resolution is nice.  We re-use the instance method
 declaration / defaulting in the body as a way of expressing the parameters:
 
 ```haskell
+module NewPrelude where
+
+-- Similar to http://www.haskell.org/haskellwiki/Functor-Applicative-Monad_Proposal
+
+class Functor f where
+  map :: (a -> b) -> f a -> f b
+ 
+class Functor f => Applicative f where
+  return :: a -> f a
+  (<*>) :: f (a -> b) -> f a -> f b
+  (*>) :: f a -> f b -> f b
+  (<*) :: f a -> f b -> f a
+ 
+class Applicative m => Monadic m where
+  (>>=) :: m a -> (a -> m b) -> m b
+  x >>= f = join $ map f x
+
+  join :: m (m a) -> m a
+  join x = x >>= id
+ 
+class Monadic m => MonadFail m where
+  fail :: String -> m a
+
+```
+
+```haskell
+import qualified NewPrelude as N
+
+type Monad m = (N.Functor m, N.Applicative m, N.Monadic m, N.MonadFail m)
+
 deriver Monad m where
   (>>=)  :: m a -> (a -> m b) -> m b
   (>>)   :: m a ->       m b  -> m b
@@ -303,7 +321,7 @@ deriver Monad m where
     N.return = return
     N.(<*>) = 
 
-  instance N.Monad m where
+  instance N.Monadic m where
     N.(>>=) = (>>=)
 
   instance N.MonadFail m where
