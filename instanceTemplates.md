@@ -214,3 +214,106 @@ provide class dictionaries at runtime.
 As mentioned earlier, I'm not sure if `Instance (Num a)` should have the same
 data representation that's implicitly created for `Num a =>`. For this
 "run-time instances" idea, it would certainly be elegant if it did.
+
+
+Brainstorming Notes
+-------------------
+
+For posterity, here are some notes I wrote while developing this idea further /
+writing the implementation.  This proposal will probably be re-worked as a
+result of the following, probably somewhat incoherent notes
+
+```haskell
+monadReturnBind :: (a -> m a)
+                -> (m a -> (a -> m b) -> m b)
+                -> Instance (Monad m)
+deriver MonadReturnBind b r where
+  instance Monad m where
+    m >>= k = b
+    return  = r
+    m >> k  = m >>= \_ -> k
+    fail s  = error s
+```
+
+Becomes:
+
+```haskell
+monadReturnBind :: Exp
+                -> Exp
+                -> Instance (Monad m)
+monadReturnBind b r = Instance 
+  [d| instance Monad m where
+        m >>= k = $(b)
+        return  = $(r)
+        m >> k  = m >>= \_ -> k
+        fail s = error s
+    |]
+```
+
+```haskell
+monadReturnBind (:[]) (flip concatMap)
+```
+
+Becomes:
+
+```haskell
+monadReturnBind [e| (:[]) |] [e| flip concatMap |]
+```
+
+
+Problem: Need to non-trivially transform which instances are created + allow
+for shared named sub expressions (where statements).
+
+This wouldn't be a problem if this was a language feature, but with TH we have
+a distinction between compile time and runtime values.
+
+Possible resolutions:
+
+- Have both compile and runtime representations of the parameters to the
+  instantiator.  Downside:  Complex!
+
+- Have a restricted representation with no compile time code
+
+    - Downside:  Can't delegate work to other instantiators / merge multiple.
+      Maybe this is a good thing?  Delegating seems awfully AOP.
+
+    - We can (hopefully) rely on the optimizer to notice common sub-expressions
+      that are repeated in the method definitions, in terms of static values.
+      Right?!
+
+    - We can invoke derivers using whatever top-level syntax we end up picking
+
+I think that the latter resolution is nice.  We re-use the instance method
+declaration / defaulting in the body as a way of expressing the parameters:
+
+```haskell
+deriver Monad m where
+  (>>=)  :: m a -> (a -> m b) -> m b
+  (>>)   :: m a ->       m b  -> m b
+  return :: a      -> m a
+  fail   :: String -> m a
+
+  m >> k = m >>= \_ -> k
+  fail = error
+
+  instance N.Functor m where
+    N.map f = (>>= return . f)
+
+  instance N.Applicative m where
+    N.return = return
+    N.(<*>) = 
+
+  instance N.Monad m where
+    N.(>>=) = (>>=)
+
+  instance N.MonadFail m where
+    N.fail = fail
+```
+
+Another issue is that if we now generate more instances than before, then there
+will be an ambiguity with any old declarations, particularly orphans.
+
+My stance is that orphans are known-dangerous, and so this should be an error.
+The question is what to do with non-orphan instances.. I think the answer is to
+leave them, but yield a warning.  E.g.  "Warning: Repressing AAA derivation of
+BBB instance".
