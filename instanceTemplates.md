@@ -6,155 +6,94 @@ equivalent to introducing TH functions of the variety that are already pretty
 popular: deriving class instances.
 
 ```haskell
-monadReturnBind :: (a -> m a)
-                -> (m a -> (a -> m b) -> m b)
-                -> Instance (Monad m)
-monadReturnBind b r 
-  = instance Monad m where
-      m >>= k = b
-      return  = r
-      m >> k  = m >>= \_ -> k
-      fail s  = error s
+deriving class PreOrder a where
+  (<=) :: a -> a -> Bool
 
+  instance Eq a where
+    x == y = (x <= y) && (y <= x)
 
-monadApplicative :: Monad m
-                 => Instance (Applicative m)
-monadApplicative
-  = instance Applicative m where
-      pure = return
-      (<*>) = ap
+  instance Ord a where
+    (<=) = (<=)
 ```
 
-I'm not sure what to call these, so for now will use "instance templates".
-I also like the term "instantiators", as this does not have a distinct meaning
-within Haskell's language context.  Overloading a term that's useful to
-describe libraries might be confusing, though.  It might make sense to use
-the term "deriver" if these become the dominant method of instance derivation.
+The immediately nested `(<=)` signature specifies the "parameters" of the
+"class deriver".  These are considered parameters, because they are only used
+to specialize the generated instance, and aren't exported.
 
-One question is the syntax used to invoke instance templates.  Here are a few
-possibilities:
+The `(<=)` nested inside `instance Ord` is not ambiguous with the outer one,
+because the deriver parameters shadow the methods defined within (method
+definitions can reference eachother, though).
+
+It's also useful to be able to refer to the deriver by the same name with
+which it is invoked.  Therefore, the above definition would implicitly create
+the following constraint-kind synonym:
 
 ```haskell
--- TH style (undecorated, top-level invocation)
-instantiate (monadReturnBind (:[]) (flip concatMap) :: Instance (Monad []))
+type PreOrder a = (Eq a, Ord a)
 
--- Decorated TH
-$(instantiate (monadReturnBind (:[]) (flip concatMap) :: Instance (Monad [])))
-
--- Special syntax
-derive Monad [] using
-  monadReturnBind (:[]) (flip concatMap)
+-- Or, equivalently, due to superclasses:
+type PreOrder a = Ord a
 ```
 
-Note that every definition provides the type of instance expected.  This makes
-it clear what this means for our (implicit) exports, and allows for string
-searches to figure out where an instance is defined.  If this was implemented
-using TH, `instantiate` would have the type `Instance a -> [Dec]`.
-
-We still haven't discussed what `Instance` actually /is/.  Being able to use
-classes as parameters is conveniently provided by constraint kinds.  I'm not
-sure what the value of `Instance a` should be.  Probably cleanest would be to
-have it quite literally be the dictionary that's passed around for the class at
-runtime. However, for the TH implementation of this idea it will almost
-certainly store a list of the generated declarations.
-
-Record (eeew) syntax could make this stuff look a tiny bit closer to building
-instances based on some subset of the methods:
+In order to use the above declaration, we write code that looks like this:
 
 ```haskell
-instantiate (implement $ enumDict {
-    toEnum   = Just fromIntegral
-    fromEnum = Just (fromInteger . truncate)
-  } :: Instance (Enum Float))
+instance PreOrder Bool where
+  False <= _ = True
+  True  <= x = x
 ```
 
-This example is from the Prelude definition for `Float`.  Interestingly,
-`Double` has an identical set of method definitions!  A perfect application of
-instance templates - allowing convenient implementation of `Enum` for any
-`RealFrac` implementor.
+Something to note is that this instance could not have been written before,
+because `PreOrder` is a constraint synonym.  This means that this feature does
+not cause any ambiguity.  If you know which names are constraint synonyms, and
+which are classes, then it is clear which instances invoke a derivation.
 
-`implement :: Implement a ctxt => a -> Instance ctxt` converts some data-
-representation of an instance into the desired `Instance`.  In this case, we
-update a record that's initially populated with `Nothing`s to express partial
-implementations of classes.
+The above instance would be expanded into:
 
+```haskell
+instance Eq a where
+  x == y = (x <= y) && (y <= x)
+   where
+    False <= _ = True
+    True  <= x = x
+
+instance Ord a where
+  (<=) = (<=)
+   where
+    False <= _ = True
+    True  <= x = x
+```
+
+It's somewhat ugly that the provided parameters would be duplicated among
+every single method of the generated instances, but this is the trivial,
+definitional de-sugaring.  The compiler could certainly do something more
+clever.  This de-sugaring justifies the scoping rules mentioned earlier.
+
+Another issue is that if we now generate more instances than before, then
+there will be an ambiguity with any old declarations, particularly orphans.  I
+think that it's reasonable to assume that if an instance is given in the same
+module, then that instance should be given priority (perhaps generating a
+WARNING that can be supressed with a pragma). As far as orphans go, they are
+known to be dangerous, so it is fine to break orphan assumptions.
 
 Why?
-----
+====
 
 * It's simple.  We're just supplying values to a generic instance, to create a
-  specific one.
+  specific one, and these parameters are referentially transparent.
 
 * More powerful instance derivation allows us to mitigate the impact of
   historical decisions.
 
-      - Being able to rework, say, the Numeric class hierarchy, is the main goal
-        of this proposal:
-        http://hackage.haskell.org/trac/ghc/wiki/DefaultSuperclassInstances
+  Being able to rework, say, the Numeric class hierarchy, is the main goal of
+  this proposal (and those that came before):
+  http://hackage.haskell.org/trac/ghc/wiki/DefaultSuperclassInstances
     
-        As mentioned in that page, default superclass instances have been a "matter
-        of consternation" for some time, as no approach to the problem has been
-        satisfying enough to be implemented.  By forcing the decision of how to
-        implement a class to be per-datatype, we avoid attempting to define
-        typeclasses which can be implemented universally in terms of some other.
-        The possibility is briefly mention, and a link to the relevant proposal
-        is given:
-        http://www.haskell.org/haskellwiki/Superclass_defaults
-    
-        This proposal, and mine, play quite nicely with constraint synonyms - instance
-        templates can have a compound class constraint in the type argument.
-    
-        Where this proposal falls flat is that it still relies on the defaulting
-        system as its mechanism, leading to strange things:
-        
-        > If both Class1 and Class2 have a default implementation, and Class1 is a
-        > (indirect) superclass of Class2, then the default from Class1 is ignored.
-        
-        Also, by trying to wedge superclass defaults into the existing syntax, we
-        end up with a ton of funky restrictions:
-        
-        > Subject to the constraint that:
-        > * No class appears more than once in the list.
-        > * The arguments to each class are the same.
-        > * ... the superclass relation gives a connected acyclic graph with a
-            single source, the most specific class in the hierarchy.
-        
-        This is also a weakness in the Strathyclyde Haskell Enhancement's
-        implementation of default superclass instances.
-    
-      - Here's a design goal from the superclass instances write-up. It's given as
-        the reason that an "Opt-In" scheme such as this is undesirable.
-        
-        > Design goal 1: a class C can be re-factored into a class C with a
-        > superclass, without disturbing any clients.
-        
-        I think that this is still quite possible with the Opt-In scheme, we just
-        need to make instance declarations potentially mean something quite
-        different than before.  The earlier, record-based example would be
-        the result of de-sugaring:
-        
-        ```haskell
-        instance Enum Float where
-          toEnum   = fromIntegral
-          fromEnum = fromInteger . truncate
-        ```
-        
-        If this sugar were implemented, then /all/ instances of Enum would pass
-        through this. This can allow us to split up classes without breaking code
-        (preventing the pain of things like the Eq / Show / Num split-up).
-
-
-* Class defaults are broken.
-
-  - While minimum definition requirements are often documented, they aren't
-    enforced.  Using the "record" style mentioned above with instance
-    templates, this can be checked.
-
-  - They create somewhat OOP-ish inheritance of implementation. While handy,
-    this can encourage some very undesirable class hierarchy designs.
-
-  - They encourage sticking methods into the class that wouldn't be there
-    other than to provide optimizations for specific instance cases.
+  As mentioned in that page, default superclass instances have been a "matter
+  of consternation" for some time, as no approach to the problem has been
+  satisfying enough to be implemented.  By forcing the decision of how to
+  implement a class to be per-datatype, we avoid attempting to define
+  typeclasses which can be implemented universally in terms of some other.
 
 * Avoidance of TH.
 
@@ -162,118 +101,219 @@ Why?
     Haskell philosophy.
     http://stackoverflow.com/questions/10857030/whats-so-bad-about-template-haskell/
 
-  - While this feature could be implemented as a TH library (which I hope to
-    write), by making it a language feature, we can conquer the majority of the
-    useful / reasonable TH design space.
+  - This feature can be implemented as a TH library, though requiring special
+    delineation around usages.  However, the error messages and potential for
+    analysis by tools would be impaired.  By making it a language feature, we
+    can conquer even more of the useful regions of macro-expansion design space
+    and reduce the necessity of TH.
 
   - Compared to the power and complexity of TH, this feature is very simple.
-
-Not avoiding TH
----------------
-
-I probably shouldn't mention this idea, due to the apparently heretical nature
-of TH and its macro-hood.  However, it's occurred to me that many varieties of
-these instance templates have regular structure.
-
-The main example of this is anything that's newtype-ish - where we have
-(a -> b) and (b -> a).  An instance template could take these two functions and
-yield the instance that would have been generated if you could inject a custom
-constructor / destructor into GeneralizedNewtypeDeriving.  For example, Num:
-
-```haskell
-wrapNum :: Num b
-        => (a -> b)
-        -> (b -> a)
-        -> Instance (Num a)
-wrapNum f g = instance Num a where
-  x + y         = g (f x + f y)
-  x * y         = g (f x * f y)
-  x - y         = g (f x - f y)
-  negate      x = g (negate      (f x))
-  abs         x = g (abs         (f x))
-  signum      x = g (signum      (f x))
-  fromInteger x = g (fromInteger (f x))
-```
-
-We can automatically generate this definition by processing the type signatures
-of the methods in the class.  Parameters that are `a` should have `f` applied
-to them, and results of type `a` should have `g` applied to them.
-
-By extending this rewriting to more cases, we can get more sophisticated
-derivers.  For example, it could be specified that a result of type `f a`
-should have `fmap g` applied to it.
+    It's referentially transparent, hygenic expansion, as opposed to 
 
 
-Brainstorming Notes
--------------------
+Examples
+========
 
-For posterity, here are some notes I wrote while developing this idea further /
-writing the implementation.  This proposal will probably be re-worked as a
-result of the following, probably somewhat incoherent notes
+Splitting out Eq / Show
+-----------------------
+
+With GHC 7.4, one of the first breaking changes (in a while, anyway) was made
+to the Prelude - removing the Eq and Show superclass constraints.  Here's how
+this feature would have made the change non-breaking:
 
 ```haskell
-monadReturnBind :: (a -> m a)
-                -> (m a -> (a -> m b) -> m b)
-                -> Instance (Monad m)
-deriver MonadReturnBind b r where
-  instance Monad m where
-    m >>= k = b
-    return  = r
-    m >> k  = m >>= \_ -> k
-    fail s  = error s
+-- In Prelude
+
+import qualified NewPrelude as N
+
+deriving class (Show a, Eq a) => Num a where
+  instance N.Num a
+
+deriving class (Num a, Ord a) => Real a where
+  instance N.Real a
+
+deriving class (Real a, Enum a) => Integral a where
+  instance N.Integral a
+
+deriving class (Num a) => Fractional a where
+  instance N.Fractional a
+
+deriving class (Real a, Fractional a) => RealFrac a where
+  instance N.RealFrac a
 ```
 
-Becomes:
+Here, the empty instances are indicating that the methods of the instance are
+implicitly made into parameters of the deriver.
+
+Eq / Show is a fairly minimal change to the numeric hierarchy, but it
+required a lot of declarations because it happened at the root of the
+hierarchy.
+
+Redundant Enum instances for RealFloat
+--------------------------------------
 
 ```haskell
-monadReturnBind :: Exp
-                -> Exp
-                -> Instance (Monad m)
-monadReturnBind b r = Instance 
-  [d| instance Monad m where
-        m >>= k = $(b)
-        return  = $(r)
-        m >> k  = m >>= \_ -> k
-        fail s = error s
-    |]
+instance  Enum Float  where
+    succ x           =  x+1
+    pred x           =  x-1
+    toEnum           =  fromIntegral
+    fromEnum         =  fromInteger . truncate   -- may overflow
+    enumFrom         =  numericEnumFrom
+    enumFromThen     =  numericEnumFromThen
+    enumFromTo       =  numericEnumFromTo
+    enumFromThenTo   =  numericEnumFromThenTos
+
+instance  Enum Double  where
+    succ x           =  x+1
+    pred x           =  x-1
+    toEnum           =  fromIntegral
+    fromEnum         =  fromInteger . truncate   -- may overflow
+    enumFrom         =  numericEnumFrom
+    enumFromThen     =  numericEnumFromThen
+    enumFromTo       =  numericEnumFromTo
+    enumFromThenTo   =  numericEnumFromThenTo
 ```
+
+A perfect application of instance templates!  These two instance declarations
+are identical. In general, we can use this as a template for a potential
+way of getting an implementation of `Enum` for any `RealFrac` implementor.
+Here's the implemention using derivers:
 
 ```haskell
-monadReturnBind (:[]) (flip concatMap)
+deriving class RealFrac a => FloatEnum a where
+  instance Enum a where
+    succ x           =  x+1
+    pred x           =  x-1
+    toEnum           =  fromIntegral
+    fromEnum         =  fromInteger . truncate   -- may overflow
+    enumFrom         =  numericEnumFrom
+    enumFromThen     =  numericEnumFromThen
+    enumFromTo       =  numericEnumFromTo
+    enumFromThenTo   =  numericEnumFromThenTo
+
+instance FloatEnum Float
+
+instance FloatEnum Double
 ```
 
-Becomes:
+Fine Grained Numerics
+---------------------
+
+A more fine-grained splitting of the numeric hierarchy might look something
+like this:
 
 ```haskell
-monadReturnBind [e| (:[]) |] [e| flip concatMap |]
+class Addable a where
+  (+) :: a -> a -> a
+
+class Multiplicable a where
+  (*) :: a -> a -> a
+
+class Subtractable a where
+  (-) :: a -> a -> a
+
+class Negateable a where
+  negate :: a -> a
+
+class Absable a where
+  abs :: a -> a
+
+class Signumable a where
+  signum :: a -> a
+
+class FromIntegerable a where
+  fromInteger :: a -> a
+
+deriving class Num a where
+  instance Addable         a
+  instance Multiplicable   a
+  instance Subtractable    a
+  instance Negateable      a
+  instance Absable         a
+  instance Signumable      a
+  instance FromIntegerable a
 ```
 
+This can be made even more general (however possibly breaking code):
 
-Problem: Need to non-trivially transform which instances are created + allow
-for shared named sub expressions (where statements).
+```haskell
+class Add a b where
+  type AddResult a b :: *
+  (+) :: a -> b -> AddResult a b
 
-This wouldn't be a problem if this was a language feature, but with TH we have
-a distinction between compile time and runtime values.
+class Subtract a b where
+  type SubtractResult a b :: *
+  (-) :: a -> b -> SubtractResult a b
 
-Possible resolutions:
+class Negate a where
+  type NegateResult a :: *
+  negate :: a -> NegateResult a
 
-- Have both compile and runtime representations of the parameters to the
-  instantiator.  Downside:  Complex!
+class Abs a where
+  type AbsResult a :: *
+  abs :: a -> Abs a
 
-- Have a restricted representation with no compile time code
+class Signum a where
+  type SignumResult a :: *
+  signum :: a -> SignumResult a
 
-    - Downside:  Can't delegate work to other instantiators / merge multiple.
-      Maybe this is a good thing?  Delegating seems awfully AOP.
+class FromInteger a where
+  type FromIntegerResult :: *
+  fromInteger :: a -> FromIntegerResult a
 
-    - We can (hopefully) rely on the optimizer to notice common sub-expressions
-      that are repeated in the method definitions, in terms of static values.
-      Right?!
+deriving class Addable a where
+  (+) :: a -> a -> a
+  instance Add a a where
+    type AddResult a b = a
+    (+) = (+)
 
-    - We can invoke derivers using whatever top-level syntax we end up picking
+deriving class Subtractable a where
+  (-) :: a -> a -> a
+  instance Subtract a a where
+    type SubtractResult a b = a
+    (-) = (-)
 
-I think that the latter resolution is nice.  We re-use the instance method
-declaration / defaulting in the body as a way of expressing the parameters:
+deriving class Negateable a where
+  negate :: a -> a
+  instance Negate a where
+    type NegateResult a b = a
+    negate = negate
 
+deriving class Absable a where
+  abs :: a -> a
+  instance Abs a a where
+    type AbsResult a = a
+    abs = abs
+
+deriving class Signumable a where
+  signum :: a -> a
+  instance Signum a where
+    type SignumResult a = a
+    signum = signum
+
+deriving class FromIntegrable a where
+  fromIntegral :: a -> a
+  instance FromIntegral a where
+    type FromIntegralResult a = a
+    fromIntegral = fromIntegral
+
+deriving class Num a where
+  instance Addable         a
+  instance Multiplicable   a
+  instance Subtractable    a
+  instance Negateable      a
+  instance Absable         a
+  instance Signumable      a
+  instance FromIntegerable a
+```
+
+Note that the Num deriver remained unchanged, despite all of the methods now
+having the most general type that's still (somewhat) useful!  Unfortuantely,
+this might break some polymorphic code that has explicit signatures.  Also,
+polymorphic signatures might get much more complicated.
+
+Functor - Applicative - Monadic
+-------------------------------
 ```haskell
 module NewPrelude where
 
@@ -287,6 +327,9 @@ class Functor f => Applicative f where
   (<*>) :: f (a -> b) -> f a -> f b
   (*>) :: f a -> f b -> f b
   (<*) :: f a -> f b -> f a
+
+  a *> b = map (const id) a <*> b
+  a <* b = map const a <*> b
  
 class Applicative m => Monadic m where
   (>>=) :: m a -> (a -> m b) -> m b
@@ -298,12 +341,10 @@ class Applicative m => Monadic m where
 class Monadic m => MonadFail m where
   fail :: String -> m a
 
-```
 
-```haskell
-import qualified NewPrelude as N
+-- We would then have the original Prelude export the following:
 
-type Monad m = (N.Functor m, N.Applicative m, N.Monadic m, N.MonadFail m)
+type Monad m = (Functor m, Applicative m, Monadic m, MonadFail m)
 
 deriver Monad m where
   (>>=)  :: m a -> (a -> m b) -> m b
@@ -314,24 +355,115 @@ deriver Monad m where
   m >> k = m >>= \_ -> k
   fail = error
 
-  instance N.Functor m where
-    N.map f = (>>= return . f)
+  instance Functor m where
+    map f = (>>= return . f)
 
-  instance N.Applicative m where
-    N.return = return
-    N.(<*>) = 
+  instance Applicative m where
+    return = return
+    l <*> r = l >>= \f ->
+              r >>= \x -> return (f x)
 
-  instance N.Monadic m where
-    N.(>>=) = (>>=)
+  instance Monadic m where
+    (>>=) = (>>=)
 
-  instance N.MonadFail m where
-    N.fail = fail
+  instance MonadFail m where
+    fail = fail
 ```
 
-Another issue is that if we now generate more instances than before, then there
-will be an ambiguity with any old declarations, particularly orphans.
 
-My stance is that orphans are known-dangerous, and so this should be an error.
-The question is what to do with non-orphan instances.. I think the answer is to
-leave them, but yield a warning.  E.g.  "Warning: Repressing AAA derivation of
-BBB instance".
+Bonus Feature - Scope-Restricted Weak Typing
+--------------------------------------------
+
+This is not at all a crucial point of my proposal, however, it is the kind of
+thinking about instances that falls out of having a capability like this.
+
+It's very tempting to give your language the 'intelligence' to implicitly apply
+a function in order to resolve what would otherwise be a type error.  Common
+examples of weak typing found in other languages are `Int -> Float`,
+`Bool -> Int`, `Int -> String`, `String -> Int` and even `Float -> Int`.
+
+Conveniences like this are 
+
+The main example of this is anything that's newtype-ish - where we have
+(a -> b) and (b -> a).  An instance template could take these two functions and
+yield the instance that would have been generated if you could inject a custom
+constructor / destructor into GeneralizedNewtypeDeriving.  For example, Num:
+
+```haskell
+deriving Num b => BijNum a b where
+  f :: a -> b
+  g :: b -> a
+
+  instance Num a where
+    x + y         = g (f x + f y)
+    x * y         = g (f x * f y)
+    x - y         = g (f x - f y)
+    negate      x = g (negate      (f x))
+    abs         x = g (abs         (f x))
+    signum      x = g (signum      (f x))
+    fromInteger x = g (fromInteger (f x))
+```
+
+We can automatically generate this definition by processing the type signatures
+of the methods in the class.  Parameters that are `a` should have `f` applied
+to them, and results of type `a` should have `g` applied to them.
+
+By extending this rewriting to more cases, we can get more sophisticated
+derivers.  For example, it could be specified that a result of type `f a`
+should have `fmap g` applied to it.  By giving a notation for specifying this
+rewriting, we are conceptually introducing the convenience of weak-typing, but
+properly scoped to a known set of defintions / value junctures.
+
+
+Relationship to Other Proposals
+-------------------------------
+
+(This section is incomplete)
+
+The question might be asked "Why wasn't this thought of before?".  The answer
+is "I'm not sure", but I think that it likely has been thought about before,
+just disregarded due to some preconceived notions of a desirable mechanism.
+By focussing on extending the typeclass system directly, we end up with a very
+complicated set of tradeoffs, that are tough to navigate.
+
+
+Here's a design goal from the superclass instances write-up. It's given
+as the reason that an "Opt-In" scheme such as this is undesirable,
+without much further explanation.
+  
+> Design goal 1: a class C can be re-factored into a class C with a
+> superclass, without disturbing any clients.
+
+I think that this is still quite possible with the Opt-In scheme, we
+just need to make instance declarations potentially mean something
+quite different than before (when applied to constraint synonyms).
+
+This can allow us to split up classes without breaking code
+(preventing the pain of things like the Eq / Show / Num split-up).
+
+
+http://www.haskell.org/haskellwiki/Superclass_defaults
+
+This proposal, and mine, play quite nicely with constraint synonyms -
+instance templates can have a compound class constraint in the type
+argument.
+
+Where this proposal falls flat is that it still relies on the
+defaulting system as its mechanism, leading to strange things:
+
+> If both Class1 and Class2 have a default implementation, and Class1
+> is a (indirect) superclass of Class2, then the default from Class1
+> is ignored.
+
+Also, by trying to wedge superclass defaults into the existing syntax,
+we end up with a ton of funky restrictions:
+
+> Subject to the constraint that:
+> * No class appears more than once in the list.
+> * The arguments to each class are the same.
+> * ... the superclass relation gives a connected acyclic graph with a
+    single source, the most specific class in the hierarchy.
+
+This is also a weakness in the Strathyclyde Haskell Enhancement's
+implementation of default superclass instances.
+
