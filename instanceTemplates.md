@@ -1,9 +1,14 @@
 Instance Templates
 ==================
 
-This goes a little bit beyond "reskinning" Haskell, however is fairly
+This goes a little bit beyond "re-skinning" Haskell, however is fairly
 equivalent to introducing TH functions of the variety that are already pretty
 popular: deriving class instances.
+
+The purpose of these declarations is to provide a mechanism for expressing how
+a set of interfaces can be expressed in terms of some other interface.  This
+allows us to restructure class hierarchies without breaking client code, and
+reduce code duplication found in boilerplate instances.
 
 ```haskell
 deriving class PreOrder a where
@@ -16,23 +21,22 @@ deriving class PreOrder a where
     (<=) = (<=)
 ```
 
-The immediately nested `(<=)` signature specifies the "parameters" of the
-"class deriver".  These are considered parameters, because they are only used
-to specialize the generated instance, and aren't exported.
+The immediately nested `(<=)` signature declares a "parameter" of the "class
+deriver".  These are considered parameters, because they are only used to
+specialize the generated instances, and don't get exported.
 
 The `(<=)` nested inside `instance Ord` is not ambiguous with the outer one,
 because the deriver parameters shadow the methods defined within (method
-definitions can reference eachother, though).
+definitions can reference each other, though).
 
-It's also useful to be able to refer to the deriver by the same name with
-which it is invoked.  Therefore, the above definition would implicitly create
-the following constraint-kind synonym:
+When utilized to generate instances, "PreOrder" is referencing the instance
+template.  What should it mean elsewhere?  Well, it'd be nice to still have
+the property that instance heads can be used as constraints in polymorphic
+types.  As such, I think it's reasonable for the above definition to
+implicitly create the following constraint-kind synonym:
 
 ```haskell
 type PreOrder a = (Eq a, Ord a)
-
--- Or, equivalently, due to superclasses:
-type PreOrder a = Ord a
 ```
 
 In order to use the above declaration, we write code that looks like this:
@@ -43,12 +47,7 @@ instance PreOrder Bool where
   True  <= x = x
 ```
 
-Something to note is that this instance could not have been written before,
-because `PreOrder` is a constraint synonym.  This means that this feature does
-not cause any ambiguity.  If you know which names are constraint synonyms, and
-which are classes, then it is clear which instances invoke a derivation.
-
-The above instance would be expanded into:
+This instance would then, at compile time, be expanded into:
 
 ```haskell
 instance Eq a where
@@ -66,15 +65,12 @@ instance Ord a where
 
 It's somewhat ugly that the provided parameters would be duplicated among
 every single method of the generated instances, but this is the trivial,
-definitional de-sugaring.  The compiler could certainly do something more
-clever.  This de-sugaring justifies the scoping rules mentioned earlier.
-
-Another issue is that if we now generate more instances than before, then
-there will be an ambiguity with any old declarations, particularly orphans.  I
-think that it's reasonable to assume that if an instance is given in the same
-module, then that instance should be given priority (perhaps generating a
-WARNING that can be supressed with a pragma). As far as orphans go, they are
-known to be dangerous, so it is fine to break orphan assumptions.
+definitional desugaring.  The compiler could certainly do something more
+clever.  This desugaring justifies the scoping rules mentioned earlier. I'm
+not even sure if "templates" should be instantiated in the way that their name
+suggests.  Since there is certainly finite usage of them in a given program,
+it's reasonable to literally instantiate them.  At once, it might be more
+efficient to only compile the template, and provide the parameters at runtime.
 
 Why?
 ====
@@ -107,8 +103,8 @@ Why?
     can conquer even more of the useful regions of macro-expansion design space
     and reduce the necessity of TH.
 
-  - Compared to the power and complexity of TH, this feature is very simple.
-    It's referentially transparent, hygenic expansion, as opposed to 
+  - Compared to the power and complexity of TH, this feature is very simple,
+    and we can rely on the reasoning power of referential transparency.
 
 
 Examples
@@ -142,12 +138,14 @@ deriving class (Real a, Fractional a) => RealFrac a where
   instance N.RealFrac a
 ```
 
-Here, the empty instances are indicating that the methods of the instance are
-implicitly made into parameters of the deriver.
+Here, the instances which contain no "where" clause indicate that the methods
+of the instance are implicitly made into parameters of the deriver.  I'm not
+sure if this is a good syntactic choice, but a mechanism for doing this is
+_very_ handy for the situations in which you wish to modify a class hierarchy
+without breaking clients.
 
-Eq / Show is a fairly minimal change to the numeric hierarchy, but it
-required a lot of declarations because it happened at the root of the
-hierarchy.
+Eq / Show is a fairly minimal change to the numeric hierarchy, but it required
+a lot of declarations because it happened at the root of the hierarchy.
 
 Redundant Enum instances for RealFloat
 --------------------------------------
@@ -177,10 +175,10 @@ instance  Enum Double  where
 A perfect application of instance templates!  These two instance declarations
 are identical. In general, we can use this as a template for a potential
 way of getting an implementation of `Enum` for any `RealFrac` implementor.
-Here's the implemention using derivers:
+Here's the implementation using templates:
 
 ```haskell
-deriving class RealFrac a => FloatEnum a where
+deriving class RealFrac a => RealFracEnum a where
   instance Enum a where
     succ x           =  x+1
     pred x           =  x-1
@@ -191,9 +189,9 @@ deriving class RealFrac a => FloatEnum a where
     enumFromTo       =  numericEnumFromTo
     enumFromThenTo   =  numericEnumFromThenTo
 
-instance FloatEnum Float
+instance RealFracEnum Float
 
-instance FloatEnum Double
+instance RealFracEnum Double
 ```
 
 Fine Grained Numerics
@@ -237,9 +235,7 @@ deriving class Num a where
 This can be made even more general (however possibly breaking code):
 
 ```haskell
-class Add a b where
-  type AddResult a b :: *
-  (+) :: a -> b -> AddResult a b
+-- ...
 
 class Subtract a b where
   type SubtractResult a b :: *
@@ -249,23 +245,7 @@ class Negate a where
   type NegateResult a :: *
   negate :: a -> NegateResult a
 
-class Abs a where
-  type AbsResult a :: *
-  abs :: a -> Abs a
-
-class Signum a where
-  type SignumResult a :: *
-  signum :: a -> SignumResult a
-
-class FromInteger a where
-  type FromIntegerResult :: *
-  fromInteger :: a -> FromIntegerResult a
-
-deriving class Addable a where
-  (+) :: a -> a -> a
-  instance Add a a where
-    type AddResult a b = a
-    (+) = (+)
+-- ...
 
 deriving class Subtractable a where
   (-) :: a -> a -> a
@@ -274,28 +254,12 @@ deriving class Subtractable a where
     (-) = (-)
 
 deriving class Negateable a where
-  negate :: a -> a
-  instance Negate a where
-    type NegateResult a b = a
-    negate = negate
+  (-) :: a -> a -> a
+  instance Subtract a a where
+    type SubtractResult a b = a
+    (-) = (-)
 
-deriving class Absable a where
-  abs :: a -> a
-  instance Abs a a where
-    type AbsResult a = a
-    abs = abs
-
-deriving class Signumable a where
-  signum :: a -> a
-  instance Signum a where
-    type SignumResult a = a
-    signum = signum
-
-deriving class FromIntegrable a where
-  fromIntegral :: a -> a
-  instance FromIntegral a where
-    type FromIntegralResult a = a
-    fromIntegral = fromIntegral
+-- ...
 
 deriving class Num a where
   instance Addable         a
@@ -308,9 +272,9 @@ deriving class Num a where
 ```
 
 Note that the Num deriver remained unchanged, despite all of the methods now
-having the most general type that's still (somewhat) useful!  Unfortuantely,
-this might break some polymorphic code that has explicit signatures.  Also,
-polymorphic signatures might get much more complicated.
+having the most general type that's still (somewhat) useful!  Unfortunately,
+this particular example might break some polymorphic code.  However, the effect
+shouldn't be that extensive.
 
 Functor - Applicative - Monadic
 -------------------------------
@@ -371,8 +335,67 @@ deriver Monad m where
 ```
 
 
+API Deltas
+==========
+http://www.mgsloan.com/wordpress/?p=219
+
+In this somewhat-rough, yet extensive blog post, I describe a solution to
+dependency hell.  It's not a new one - the idea is to export compatibility
+modules.  This frees the library developer to develop the API without worrying
+as much about client code.
+
+This offers a different perspective of what it can mean to write Haskell
+modules of a particular form - they can express "API Deltas".  In other words,
+they can introduce a set of definitions, in terms of some other API, that
+encode the rewriting necessary to target that other API.
+
+TODO: enumerate all of the possible forms of API differences, and show which
+ones this feature gains us.
+
+
+"Problems"
+==========
+
+No potential solution to the "default superclass instances" is without its
+trade-offs.  I think that the described solution is a straightforward,
+understandable solution to the problem, that buys a lot of power, with
+comparatively minimal issues:
+
+* We can now make instances mean something different, and generate more
+  class instances than before.  This has a few implications:
+
+    - The generated instances might conflict with those already defined in the
+      module.  In this case, I think that this is a very reasonable mechanism
+      for "opt-ing out" of a particular generated instance.  However, it could
+      be unexpected, so a pragma-suppressible warning should be generated.
+
+    - The instances a particular module exports is now dependent on the way
+      the classes are defined in its imports. This is not as much of an issue
+      as it sounds - an instance of "Monad" will still mean we have an
+      instance of "Monad" - be it a normal or compound class constraint.
+
+      However, this is an issue when it comes to orphan instances, as identical
+      library / client code could have an instance clash, given a different
+      set of definitions for the library's dependencies.  I think that this is
+      acceptable, as orphan instances are known to be dangerous, and many
+      instance templates would not have this sort of behavior.
+
+* Cannot "combine" multiple instances, using their methods as parameters to
+  the instance template.  (See "API Deltas" section above)
+
+* Ideally we'd be able to seamlessly use old code with our new typeclasses, in
+  concordance with "Design goal 1" mentioned in the "Other Proposals" section.
+  However, this means that this feature would need to only have a LANGUAGE
+  extension option (e.g. -XInstanceTemplates) for the modules defining
+  instance templates.
+
+  Are we comfortable changing the meaning of code without additional pragma,
+  in the event that the dependencies specify this pragma?  Is there any
+  precedent for language extensions doing this?
+
+
 Bonus Feature - Scope-Restricted Weak Typing
---------------------------------------------
+============================================
 
 This is not at all a crucial point of my proposal, however, it is the kind of
 thinking about instances that falls out of having a capability like this.
@@ -381,8 +404,6 @@ It's very tempting to give your language the 'intelligence' to implicitly apply
 a function in order to resolve what would otherwise be a type error.  Common
 examples of weak typing found in other languages are `Int -> Float`,
 `Bool -> Int`, `Int -> String`, `String -> Int` and even `Float -> Int`.
-
-Conveniences like this are 
 
 The main example of this is anything that's newtype-ish - where we have
 (a -> b) and (b -> a).  An instance template could take these two functions and
@@ -409,22 +430,22 @@ of the methods in the class.  Parameters that are `a` should have `f` applied
 to them, and results of type `a` should have `g` applied to them.
 
 By extending this rewriting to more cases, we can get more sophisticated
-derivers.  For example, it could be specified that a result of type `f a`
+templates.  For example, it could be specified that a result of type `f a`
 should have `fmap g` applied to it.  By giving a notation for specifying this
 rewriting, we are conceptually introducing the convenience of weak-typing, but
-properly scoped to a known set of defintions / value junctures.
+properly scoped to a known set of definitions / value junctures.
 
 
 Relationship to Other Proposals
--------------------------------
+===============================
 
 (This section is incomplete)
 
 The question might be asked "Why wasn't this thought of before?".  The answer
 is "I'm not sure", but I think that it likely has been thought about before,
 just disregarded due to some preconceived notions of a desirable mechanism.
-By focussing on extending the typeclass system directly, we end up with a very
-complicated set of tradeoffs, that are tough to navigate.
+By focusing on extending the typeclass system directly, we end up with a very
+complicated set of trade-offs, that are tough to navigate.
 
 
 Here's a design goal from the superclass instances write-up. It's given
@@ -466,4 +487,3 @@ we end up with a ton of funky restrictions:
 
 This is also a weakness in the Strathyclyde Haskell Enhancement's
 implementation of default superclass instances.
-
