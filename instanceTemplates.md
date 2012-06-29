@@ -189,9 +189,9 @@ deriving class RealFrac a => RealFracEnum a where
     enumFromTo       =  numericEnumFromTo
     enumFromThenTo   =  numericEnumFromThenTo
 
-instance RealFracEnum Float
+instance RealFracEnum Float where
 
-instance RealFracEnum Double
+instance RealFracEnum Double where
 ```
 
 Fine Grained Numerics
@@ -369,6 +369,7 @@ comparatively minimal issues:
       for "opt-ing out" of a particular generated instance.  However, it could
       be unexpected, so a pragma-suppressible warning should be generated.
 
+
     - The instances a particular module exports is now dependent on the way
       the classes are defined in its imports. This is not as much of an issue
       as it sounds - an instance of "Monad" will still mean we have an
@@ -379,6 +380,7 @@ comparatively minimal issues:
       set of definitions for the library's dependencies.  I think that this is
       acceptable, as orphan instances are known to be dangerous, and many
       instance templates would not have this sort of behavior.
+
 
 * Cannot "combine" multiple instances, using their methods as parameters to
   the instance template.  (See "API Deltas" section above)
@@ -394,8 +396,8 @@ comparatively minimal issues:
   precedent for language extensions doing this?
 
 
-Bonus Feature - Scope-Restricted Weak Typing
-============================================
+Scope-Restricted Weak Typing
+============================
 
 This is not at all a crucial point of my proposal, however, it is the kind of
 thinking about instances that falls out of having a capability like this.
@@ -445,7 +447,11 @@ The question might be asked "Why wasn't this thought of before?".  The answer
 is "I'm not sure", but I think that it likely has been thought about before,
 just disregarded due to some preconceived notions of a desirable mechanism.
 By focusing on extending the typeclass system directly, we end up with a very
-complicated set of trade-offs, that are tough to navigate.
+complicated set of trade-offs, that are tough to navigate.  Instead, this
+approach adds an entirely new type of declaration, and adds a new meaning for
+instance declarations.  Rather than "changing" the meaning of instances, we
+are allowing them to be applied to something they couldn't before - constraint
+types.
 
 
 Here's a design goal from the superclass instances write-up. It's given
@@ -455,12 +461,9 @@ without much further explanation.
 > Design goal 1: a class C can be re-factored into a class C with a
 > superclass, without disturbing any clients.
 
-I think that this is still quite possible with the Opt-In scheme, we
+I think that this is still quite possible with an Opt-In scheme, we
 just need to make instance declarations potentially mean something
 quite different than before (when applied to constraint synonyms).
-
-This can allow us to split up classes without breaking code
-(preventing the pain of things like the Eq / Show / Num split-up).
 
 
 http://www.haskell.org/haskellwiki/Superclass_defaults
