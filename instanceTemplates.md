@@ -768,12 +768,12 @@ module B where class Foo a where foo :: a -> a -> Double -> a
 -- Weaken a superclass constraint
 {-# LANGUAGE InstanceTemplates #-}
 module A where
-bar :: Eq a => a
-bar = B.foo
+foo :: Eq a => a
+foo = B.foo
 
 deriving class Foo a where
-  bar :: Eq a => a
-  instance B.Foo a where foo = bar
+  foo :: Eq a => a
+  instance B.Foo a where foo = foo
 
 module B where class Foo a where foo :: a
 
