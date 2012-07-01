@@ -623,7 +623,7 @@ module B2 where instance B Blah
 Constraint Deltas
 -----------------
 
-How about type-constraints?  Well, until recent years, doing these sorts of
+How about type-constraints?  Well, until this last year, doing these sorts of
 things wasn't possible.  With the addition of Constraint-Kinds, we now can do
 many of them:
 
@@ -673,15 +673,15 @@ module B2 where type Bar
 
 When introducing the above example, I was careful to say "type-constraints",
 not "type-classes".  This is because these API changes are leaky - they only
-help with constraints, and not with the actual classes used for instances.
+help with constraints, but not with the actual classes used for instances.
 
 
 Class Deltas
 ------------
 
-You guessed it!  Instance templates allow us to continue this pattern of being
-able to express API deltas for different Haskell declarations, but this time
-without the leakiness needed to be able to declare instances.
+Instance templates allow us to continue this pattern of being able to express
+API deltas for different Haskell declarations, but this time without the
+leakiness needed to be able to declare instances.
 
 ```haskell
 -- Rename a class
@@ -751,6 +751,7 @@ deriving class Foo a where
   instance B.Foo a where foo y x = bar x y
 
 module B where class Foo a where foo :: a -> a -> a
+
 
 -- Add a previously constant parameter
 {-# LANGUAGE InstanceTemplates #-}
@@ -942,5 +943,5 @@ and its ideas:
 
 * Edward Kmett (edwardk)
 * Luite Stegeman (luite)
-* technogeeky (tgeeky)
+* Drew Day (tgeeky)
 * William Cauchois (wcauchois)
