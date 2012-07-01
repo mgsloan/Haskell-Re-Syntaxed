@@ -1,3 +1,8 @@
+NOTE: this is almost certainly an awful idea.  Don't let its poor quality
+reflect badly on the others! (especially instance templates..)
+
+
+
 Edward Kmett's reflection package allows you to turn values into types.  This
 lets you add in type-based configuration of instances, letting you do things
 like passing around explicit dictionaries.
